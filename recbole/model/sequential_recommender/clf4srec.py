@@ -65,6 +65,8 @@ class CLF4SRec(SequentialRecommender):
         self.initializer_range = config['initializer_range']
         self.loss_type = config['loss_type']
 
+        self.step = config['step']
+
         # define layers and loss
         self.item_embedding = nn.Embedding(self.n_items + 1, self.hidden_size, padding_idx=0)
         self.position_embedding = nn.Embedding(self.max_seq_length, self.hidden_size)
@@ -92,6 +94,12 @@ class CLF4SRec(SequentialRecommender):
 
         self.mask_default = self.mask_correlated_samples(batch_size=self.batch_size)
         self.nce_fct = nn.CrossEntropyLoss()
+
+        self.gnn = GNN(self.hidden_size, self.step)
+        self.linear_1 = nn.Linear(self.hidden_size, self.hidden_size, bias=True)
+        self.linear_2 = nn.Linear(self.hidden_size, self.hidden_size, bias=True)
+        self.linear_3 = nn.Linear(self.hidden_size, 1, bias=False)
+        self.linear_out = nn.Linear(self.hidden_size * 2, self.hidden_size, bias=True)
 
         # parameters initialization
         self.apply(self._init_weights)
@@ -150,7 +158,7 @@ class CLF4SRec(SequentialRecommender):
     def forward_gcn(self, item_seq, item_seq_len):
         alias_inputs, A, items, mask = self._get_slice(item_seq)
 
-        alias_inputs = alias_inputs.view(-1, alias_inputs.size(1), 1).expand(-1, -1, self.embedding_size)
+        alias_inputs = alias_inputs.view(-1, alias_inputs.size(1), 1).expand(-1, -1, self.hidden_size)
 
         hidden = self.item_embedding(items)
         # hidden_t = self.linear_1(hidden)
@@ -274,7 +282,7 @@ class CLF4SRec(SequentialRecommender):
             loss = 1e-8
 
         loss += cff * self.rec_loss(interaction, seq_output)
-        loss += self.InfoNCE(self.kan(seq_output), self.kan(seq_first_output))
+        loss += self.InfoNCE(seq_output, seq_first_output)
 
         return loss
 
