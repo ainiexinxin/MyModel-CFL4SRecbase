@@ -282,7 +282,7 @@ class CLF4SRec(SequentialRecommender):
             loss = 1e-8
 
         loss += cff * self.rec_loss(interaction, seq_output)
-        loss += self.InfoNCE(seq_output, seq_first_output)
+        loss += self.infonce(self.tau, seq_output, seq_first_output)
 
         return loss
 
@@ -349,6 +349,43 @@ class CLF4SRec(SequentialRecommender):
         labels = torch.zeros(N).to(positive_samples.device).long()
         logits = torch.cat((positive_samples, negative_samples), dim=1)
         return logits, labels
+    
+    def infonce(self, temperature, feature1, feature2):
+        """
+        Computes the InfoNCE loss.
+        
+        Args:
+            features (torch.Tensor): The feature matrix of shape [2 * batch_size, feature_dim], 
+                                     where features[:batch_size] are the representations of 
+                                     the first set of augmented images, and features[batch_size:] 
+                                     are the representations of the second set.
+        
+        Returns:
+            torch.Tensor: The computed InfoNCE loss.
+        """
+        features = torch.cat(feature1, feature2)
+
+        # Normalize features to have unit norm
+        features = F.normalize(features, dim=1)
+        
+        # Compute similarity matrix
+        similarity_matrix = torch.matmul(features, features.T) / self.temperature
+
+        # Get batch size
+        batch_size = features.shape[0] // 2
+        
+        # Construct labels where each sample's positive pair is in the other view
+        labels = torch.arange(batch_size, device=features.device)
+        labels = torch.cat([labels + batch_size, labels], dim=0)
+
+        # Mask out self-similarities by setting the diagonal elements to -inf
+        mask = torch.eye(2 * batch_size, dtype=torch.bool, device=features.device)
+        similarity_matrix = similarity_matrix.masked_fill(mask, -float('inf'))
+        
+        # InfoNCE loss
+        loss = F.cross_entropy(similarity_matrix, labels)
+        
+        return loss
 
     def predict(self, interaction):
         item_seq = interaction[self.ITEM_SEQ]
@@ -483,4 +520,8 @@ class GNN(nn.Module):
             elif i == self.step - 1:
                 final_hidden = hidden
         return hidden, first_hidden, final_hidden
+
+
+
+
     
