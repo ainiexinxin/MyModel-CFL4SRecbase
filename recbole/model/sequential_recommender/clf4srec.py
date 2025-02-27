@@ -66,6 +66,8 @@ class CLF4SRec(SequentialRecommender):
         self.loss_type = config['loss_type']
 
         self.step = config['step']
+        self.device = config['device']
+        self.g_weight = config['g_weight']
 
         # define layers and loss
         self.item_embedding = nn.Embedding(self.n_items + 1, self.hidden_size, padding_idx=0)
@@ -115,6 +117,44 @@ class CLF4SRec(SequentialRecommender):
             module.weight.data.fill_(1.0)
         if isinstance(module, nn.Linear) and module.bias is not None:
             module.bias.data.zero_()
+
+    def _get_slice(self, item_seq):
+        # Mask matrix, shape of [batch_size, max_session_len]
+        mask = item_seq.gt(0)
+        items, n_node, A, alias_inputs = [], [], [], []
+        max_n_node = item_seq.size(1)
+        item_seq = item_seq.cpu().numpy()
+        for u_input in item_seq:
+            node = np.unique(u_input)
+            items.append(node.tolist() + (max_n_node - len(node)) * [0])
+            u_A = np.zeros((max_n_node, max_n_node))
+
+            for i in np.arange(len(u_input) - 1):
+                if u_input[i + 1] == 0:
+                    break
+
+                u = np.where(node == u_input[i])[0][0]
+                v = np.where(node == u_input[i + 1])[0][0]
+                u_A[u][v] = 1
+
+            u_sum_in = np.sum(u_A, 0)
+            u_sum_in[np.where(u_sum_in == 0)] = 1
+            u_A_in = np.divide(u_A, u_sum_in)
+            u_sum_out = np.sum(u_A, 1)
+            u_sum_out[np.where(u_sum_out == 0)] = 1
+            u_A_out = np.divide(u_A.transpose(), u_sum_out)
+            u_A = np.concatenate([u_A_in, u_A_out]).transpose()
+            A.append(u_A)
+
+            alias_inputs.append([np.where(node == i)[0][0] for i in u_input])
+        # The relative coordinates of the item node, shape of [batch_size, max_session_len]
+        alias_inputs = torch.LongTensor(alias_inputs).to(self.device)
+        # The connecting matrix, shape of [batch_size, max_session_len, 2 * max_session_len]
+        A = torch.FloatTensor(np.array(A)).to(self.device)
+        # The unique item nodes, shape of [batch_size, max_session_len]
+        items = torch.LongTensor(items).to(self.device)
+
+        return alias_inputs, A, items, mask
 
     def get_attention_mask(self, item_seq):
         """Generate left-to-right uni-directional attention mask for multi-head attention."""
@@ -195,7 +235,7 @@ class CLF4SRec(SequentialRecommender):
         item_seq_len = interaction[self.ITEM_SEQ_LEN]
 
         loss += self.tff_loss(interaction, item_seq, item_seq_len) * 0.5
-        loss += self.gcl_loss(interaction, item_seq, item_seq_len, self.config['g_weight'], self.forward_gcn) * 0.5
+        loss += self.gcl_loss(interaction, item_seq, item_seq_len, self.g_weight, self.forward_gcn) * 0.5
         return loss
 
     def tff_loss(self, interaction, item_seq, item_seq_len):
@@ -281,7 +321,7 @@ class CLF4SRec(SequentialRecommender):
             print("rec_loss:", loss)
             loss = 1e-8
 
-        loss += cff * self.rec_loss(interaction, seq_output)
+        loss *= cff 
         loss += self.infonce(self.tau, seq_output, seq_first_output)
 
         return loss
@@ -363,13 +403,13 @@ class CLF4SRec(SequentialRecommender):
         Returns:
             torch.Tensor: The computed InfoNCE loss.
         """
-        features = torch.cat(feature1, feature2)
+        features = torch.cat([feature1, feature2])
 
         # Normalize features to have unit norm
         features = F.normalize(features, dim=1)
         
         # Compute similarity matrix
-        similarity_matrix = torch.matmul(features, features.T) / self.temperature
+        similarity_matrix = torch.matmul(features, features.T) / temperature
 
         # Get batch size
         batch_size = features.shape[0] // 2
