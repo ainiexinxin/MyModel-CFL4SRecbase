@@ -68,6 +68,7 @@ class CLF4SRec(SequentialRecommender):
         self.step = config['step']
         self.device = config['device']
         self.g_weight = config['g_weight']
+        self.noise_base = config['noise_base']
 
         # define layers and loss
         self.item_embedding = nn.Embedding(self.n_items + 1, self.hidden_size, padding_idx=0)
@@ -202,6 +203,12 @@ class CLF4SRec(SequentialRecommender):
 
         hidden = self.item_embedding(items)
         # hidden_t = self.linear_1(hidden)
+
+        noise = self.gaussian_noise(hidden, self.noise_base)
+        mask1 = item_seq.gt(0).unsqueeze(dim=2)
+        noise1 = noise * mask1
+        hidden = hidden + noise1
+        
         res_hidden = self.gnn(A, hidden)
 
         def last_hidden(x):
@@ -325,6 +332,11 @@ class CLF4SRec(SequentialRecommender):
         loss += self.infonce(self.tau, seq_output, seq_first_output)
 
         return loss
+    
+    def gaussian_noise(self, source, noise_base=0.1, dtype=torch.float32):
+        x = noise_base + torch.zeros_like(source, dtype=dtype, device=source.device)
+        noise = torch.normal(mean=torch.tensor([0.0]).to(source.device), std=x).to(source.device)
+        return noise
 
     def decompose(self, z_i, z_j, origin_z, batch_size):
         """

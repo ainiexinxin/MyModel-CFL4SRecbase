@@ -84,3 +84,4 @@ lmd_tf : 0.5
 step: 2
 
 g_weight: 0.5
+noise_base: 0.01
