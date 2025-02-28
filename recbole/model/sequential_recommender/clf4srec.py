@@ -27,7 +27,7 @@ from recbole.model.layers import TransformerEncoder
 from recbole.model.loss import BPRLoss
 import torch.fft as fft
 import torch.nn.functional as F
-
+from kan import KANLinear, KAN
 
 
 class CLF4SRec(SequentialRecommender):
@@ -103,6 +103,7 @@ class CLF4SRec(SequentialRecommender):
         self.linear_2 = nn.Linear(self.hidden_size, self.hidden_size, bias=True)
         self.linear_3 = nn.Linear(self.hidden_size, 1, bias=False)
         self.linear_out = nn.Linear(self.hidden_size * 2, self.hidden_size, bias=True)
+        self.kan = KANLinear(self.hidden_size, self.hidden_size)
 
         # parameters initialization
         self.apply(self._init_weights)
@@ -328,8 +329,8 @@ class CLF4SRec(SequentialRecommender):
             print("rec_loss:", loss)
             loss = 1e-8
 
-        loss *= cff 
-        loss += self.infonce(self.tau, seq_output, seq_first_output)
+        # loss *= cff 
+        loss += 0.01 * self.infonce(self.tau, self.kan(seq_output), self.kan(seq_first_output))
 
         return loss
     
